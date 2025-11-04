@@ -145,3 +145,6 @@ harness = false
 [profile.release-with-debug]
 inherits = "release"
 debug = true
+
+[patch.crates-io]
+rustix = { git = "https://github.com/bytecodealliance/rustix" }
