@@ -335,6 +335,7 @@ impl Dmabuf {
             .planes
             .get(idx)
             .ok_or(DmabufSyncFailed::PlaneIndexOutOfBound)?;
+        #[cfg(not(target_os = "redox"))]
         unsafe { rustix::ioctl::ioctl(&plane.fd, Setter::<DMA_BUF_SYNC, _>::new(dma_buf_sync { flags })) }
             .map_err(std::io::Error::from)?;
         Ok(())
@@ -413,6 +414,7 @@ struct dma_buf_sync {
     flags: DmabufSyncFlags,
 }
 
+#[cfg(not(target_os = "redox"))]
 const DMA_BUF_SYNC: rustix::ioctl::Opcode = rustix::ioctl::opcode::write::<dma_buf_sync>(b'b', 0);
 
 /// A mapping into a [`Dmabuf`]

@@ -352,7 +352,7 @@ extern "C" fn sigbus_handler(_signum: libc::c_int, info: *mut libc::siginfo_t, _
 /// SAFETY:
 /// The returned pointer points to a struct. Make sure that you use it
 /// appropriately.
-#[cfg(any(target_os = "linux", target_os = "android"))]
+#[cfg(any(target_os = "linux", target_os = "android", target_os = "redox"))]
 unsafe fn siginfo_si_addr(info: *mut libc::siginfo_t) -> *mut libc::c_void {
     #[repr(C)]
     #[allow(non_camel_case_types)]
@@ -364,7 +364,7 @@ unsafe fn siginfo_si_addr(info: *mut libc::siginfo_t) -> *mut libc::c_void {
     unsafe { (*(info as *const siginfo_t)).si_addr }
 }
 
-#[cfg(not(any(target_os = "linux", target_os = "android")))]
+#[cfg(not(any(target_os = "linux", target_os = "android", target_os = "redox")))]
 unsafe fn siginfo_si_addr(info: *mut libc::siginfo_t) -> *mut libc::c_void {
     unsafe { (*info).si_addr as _ }
 }
