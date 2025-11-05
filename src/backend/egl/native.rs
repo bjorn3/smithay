@@ -213,7 +213,41 @@ impl EGLNativeDisplay for Arc<WinitWindow> {
                     ),
                 ]
             }
-            _ => unreachable!("No backends for winit other then Wayland and X11 are supported"),
+            Ok(raw_window_handle::RawDisplayHandle::Orbital(handle)) => {
+                let display = &raw const handle;
+                //TODO: submit to EGL registry when ready
+                const PLATFORM_REDOX_KHR: ffi::egl::types::EGLenum = 0x31D9;
+                const PLATFORM_REDOX_EXT: ffi::egl::types::EGLenum = 0x31D9;
+                vec![
+                    EGLPlatform::new(
+                        PLATFORM_REDOX_KHR,
+                        stringify!(PLATFORM_REDOX_KHR),
+                        display as *mut _,
+                        vec![ffi::egl::NONE as ffi::EGLint],
+                        &["EGL_KHR_platform_redox"],
+                    ),
+                    EGLPlatform::new(
+                        PLATFORM_REDOX_EXT,
+                        stringify!(PLATFORM_REDOX_EXT),
+                        display as *mut _,
+                        vec![ffi::egl::NONE as ffi::EGLint],
+                        &["EGL_EXT_platform_redox"],
+                    ),
+                    egl_platform!(
+                        PLATFORM_ANGLE_ANGLE,
+                        display,
+                        &["EGL_ANGLE_platform_angle", "EGL_ANGLE_platform_angle_vulkan"],
+                        vec![
+                            ffi::egl::PLATFORM_ANGLE_NATIVE_PLATFORM_TYPE_ANGLE,
+                            PLATFORM_REDOX_EXT as _,
+                            ffi::egl::PLATFORM_ANGLE_TYPE_ANGLE,
+                            ffi::egl::PLATFORM_ANGLE_TYPE_VULKAN_ANGLE,
+                            ffi::egl::NONE as ffi::EGLint
+                        ]
+                    ),
+                ]
+            }
+            _ => unreachable!("No backends for winit other then Wayland, X11, and Orbital are supported"),
         }
     }
 }
@@ -420,5 +454,31 @@ unsafe impl EGLNativeSurface for wegl::WlEglSurface {
 
     fn identifier(&self) -> Option<String> {
         Some("Winit/Wayland".into())
+    }
+}
+
+#[cfg(feature = "backend_winit")]
+#[derive(Debug)]
+pub struct OrbitalWindow(pub usize);
+
+#[cfg(feature = "backend_winit")]
+unsafe impl EGLNativeSurface for OrbitalWindow {
+    unsafe fn create(
+        &self,
+        display: &Arc<EGLDisplayHandle>,
+        config_id: ffi::egl::types::EGLConfig,
+    ) -> Result<*const c_void, super::EGLError> {
+        wrap_egl_call_ptr(|| unsafe {
+            ffi::egl::CreatePlatformWindowSurfaceEXT(
+                display.handle,
+                config_id,
+                self.0 as *mut _,
+                WINIT_SURFACE_ATTRIBUTES.as_ptr(),
+            )
+        })
+    }
+
+    fn identifier(&self) -> Option<String> {
+        Some("Winit/Orbital".into())
     }
 }

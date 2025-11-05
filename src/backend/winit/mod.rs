@@ -19,6 +19,7 @@
 //! two traits for the winit backend.
 
 use std::io::Error as IoError;
+use std::os::fd::{FromRawFd, RawFd};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -172,7 +173,26 @@ where
                     )
                 }
             }
-            _ => panic!("only running on Wayland or with Xlib is supported"),
+            Ok(RawWindowHandle::Orbital(handle)) => {
+                debug!("Winit backend: Orbital");
+                let window = unsafe {
+                    orbclient::Window::from_raw_fd(handle.window.as_ptr() as RawFd)
+                };
+                let window_ptr = Box::into_raw(Box::new(window));
+                unsafe {
+                    (
+                        EGLSurface::new(
+                            &display,
+                            context.pixel_format().unwrap(),
+                            context.config_id(),
+                            native::OrbitalWindow(window_ptr as usize),
+                        )
+                        .map_err(EGLError::CreationFailed)?,
+                        true,
+                    )
+                }
+            }
+            _ => panic!("only running on Wayland, Orbital, or with Xlib is supported"),
         };
 
         let _ = context.unbind();

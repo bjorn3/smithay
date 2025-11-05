@@ -31,6 +31,8 @@ fn gl_generate() {
                 "EGL_EXT_platform_x11",
                 "EGL_KHR_platform_wayland",
                 "EGL_EXT_platform_wayland",
+                "EGL_KHR_platform_redox",
+                "EGL_EXT_platform_redox",
                 "EGL_KHR_platform_gbm",
                 "EGL_MESA_platform_gbm",
                 "EGL_MESA_platform_surfaceless",
