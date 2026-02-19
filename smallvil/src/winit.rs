@@ -43,6 +43,10 @@ pub fn init_winit(
 
     let mut damage_tracker = OutputDamageTracker::from_output(&output);
 
+    // Orbital on Redox requires a first redraw request
+    #[cfg(target_os = "redox")]
+    backend.window().request_redraw();
+
     event_loop.handle().insert_source(winit, move |event, _, state| {
         match event {
             WinitEvent::Resized { size, .. } => {
