@@ -175,17 +175,13 @@ where
             }
             Ok(RawWindowHandle::Orbital(handle)) => {
                 debug!("Winit backend: Orbital");
-                let window = unsafe {
-                    orbclient::Window::from_raw_fd(handle.window.as_ptr() as RawFd)
-                };
-                let window_ptr = Box::into_raw(Box::new(window));
                 unsafe {
                     (
                         EGLSurface::new(
                             &display,
                             context.pixel_format().unwrap(),
                             context.config_id(),
-                            native::OrbitalWindow(window_ptr as usize),
+                            native::OrbitalWindow(handle.window.as_ptr() as usize),
                         )
                         .map_err(EGLError::CreationFailed)?,
                         true,

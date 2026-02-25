@@ -86,9 +86,6 @@ gl_generator = { version = "0.14", optional = true }
 pkg-config = { version = "0.3.17", optional = true }
 cc = { version = "1.0.79", optional = true }
 
-[target.'cfg(target_os = "redox")'.dependencies]
-orbclient = "0.3"
-
 [features]
 default = ["backend_drm", "backend_gbm", "backend_libinput", "backend_udev", "backend_session_libseat", "backend_x11", "backend_winit", "desktop", "renderer_gl", "renderer_pixman", "renderer_multi", "xwayland", "wayland_frontend", "backend_vulkan"]
 backend_winit = ["winit", "backend_egl", "wayland-client", "wayland-cursor", "wayland-egl", "renderer_gl"]
