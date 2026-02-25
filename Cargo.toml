@@ -150,7 +150,6 @@ inherits = "release"
 debug = true
 
 [patch.crates-io]
-rustix = { git = "https://github.com/bytecodealliance/rustix" }
 wayland-backend = { git = "https://github.com/jackpot51/wayland-rs.git", branch = "redox" }
 wayland-client = { git = "https://github.com/jackpot51/wayland-rs.git", branch = "redox" }
 wayland-cursor = { git = "https://github.com/jackpot51/wayland-rs.git", branch = "redox" }
