@@ -37,26 +37,26 @@ gl_generator = "0.14"
 
 [features]
 debug = ["fps_ticker", "image/png", "renderdoc"]
-default = ["egl", "winit", "x11", "udev", "xwayland"]
-egl = ["smithay/use_system_lib", "smithay/backend_egl"]
+default = ["winit", "xwayland"]
+#egl = ["smithay/use_system_lib", "smithay/backend_egl"]
 test_all_features = ["default", "debug"]
-udev = [
-  "smithay-drm-extras",
-  "smithay/backend_libinput",
-  "smithay/backend_udev",
-  "smithay/backend_drm",
-  "smithay/backend_gbm",
-  "smithay/backend_vulkan",
-  "smithay/backend_egl",
-  "smithay/backend_session_libseat",
-  "image",
-  "smithay/renderer_gl",
-  "smithay/renderer_pixman",
-  "smithay/renderer_multi",
-  "xcursor",
-]
+# udev = [
+#   "smithay-drm-extras",
+#   "smithay/backend_libinput",
+#   "smithay/backend_udev",
+#   "smithay/backend_drm",
+#   "smithay/backend_gbm",
+#   "smithay/backend_vulkan",
+#   "smithay/backend_egl",
+#   "smithay/backend_session_libseat",
+#   "image",
+#   "smithay/renderer_gl",
+#   "smithay/renderer_pixman",
+#   "smithay/renderer_multi",
+#   "xcursor",
+# ]
 winit = ["smithay/backend_winit", "smithay/backend_drm"]
-x11 = ["smithay/backend_x11", "x11rb", "smithay/renderer_gl", "smithay/backend_vulkan"]
+#x11 = ["smithay/backend_x11", "x11rb", "smithay/renderer_gl", "smithay/backend_vulkan"]
 xwayland = ["smithay/xwayland", "x11rb", "smithay/x11rb_event_source", "xcursor"]
 profile-with-puffin = ["profiling/profile-with-puffin", "puffin_http"]
 profile-with-tracy = ["profiling/profile-with-tracy"]

@@ -3,13 +3,14 @@ use std::time::Duration;
 use smithay::{
     backend::{
         renderer::{
-            damage::OutputDamageTracker, element::surface::WaylandSurfaceRenderElement, gles::GlesRenderer,
+            damage::OutputDamageTracker, element::surface::WaylandSurfaceRenderElement,
+            pixman::PixmanRenderer,
         },
         winit::{self, WinitEvent},
     },
     output::{Mode, Output, PhysicalProperties, Subpixel},
     reexports::calloop::EventLoop,
-    utils::{Rectangle, Transform},
+    utils::Transform,
 };
 
 use crate::Smallvil;
@@ -62,14 +63,11 @@ pub fn init_winit(
             }
             WinitEvent::Input(event) => state.process_input_event(event),
             WinitEvent::Redraw => {
-                let size = backend.window_size();
-                let damage = Rectangle::from_size(size);
-
-                {
+                let render_res = {
                     let (renderer, mut framebuffer) = backend.bind().unwrap();
                     smithay::desktop::space::render_output::<
                         _,
-                        WaylandSurfaceRenderElement<GlesRenderer>,
+                        WaylandSurfaceRenderElement<PixmanRenderer>,
                         _,
                         _,
                     >(
@@ -83,9 +81,11 @@ pub fn init_winit(
                         &mut damage_tracker,
                         [0.1, 0.1, 0.1, 1.0],
                     )
-                    .unwrap();
+                    .unwrap()
+                };
+                if let Some(damage) = render_res.damage {
+                    backend.submit(Some(damage)).unwrap();
                 }
-                backend.submit(Some(&[damage])).unwrap();
 
                 state.space.elements().for_each(|window| {
                     window.send_frame(
