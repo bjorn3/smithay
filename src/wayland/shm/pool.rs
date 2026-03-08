@@ -301,7 +301,7 @@ unsafe fn place_sigbus_handler() {
             // and libc does not guarantee that for all targets
             let mut action: libc::sigaction = mem::zeroed();
             action.sa_sigaction = sigbus_handler as *const () as _;
-            action.sa_flags = libc::SA_SIGINFO | libc::SA_NODEFER;
+            action.sa_flags = (libc::SA_SIGINFO | libc::SA_NODEFER) as _;
 
             let mut old_action = mem::zeroed();
             if libc::sigaction(libc::SIGBUS, &action, &mut old_action) == -1 {
