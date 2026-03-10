@@ -19,16 +19,20 @@
 //! two traits for the winit backend.
 
 use std::io::Error as IoError;
+use std::num::NonZeroU32;
 use std::sync::Arc;
 use std::time::Duration;
 
 use calloop::generic::Generic;
 use calloop::{EventSource, Interest, PostAction, Readiness, Token};
+#[cfg(feature = "renderer_pixman")]
+use pixman::Image;
 use tracing::{debug, info, info_span, instrument, trace, warn};
+#[cfg(feature = "backend_egl")]
 use wayland_egl as wegl;
+use winit::event_loop::OwnedDisplayHandle;
 use winit::platform::pump_events::PumpStatus;
 use winit::platform::scancode::PhysicalKeyExtScancode;
-use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use winit::{
     application::ApplicationHandler,
     dpi::LogicalSize,
@@ -38,19 +42,18 @@ use winit::{
     window::{Window as WinitWindow, WindowAttributes, WindowId},
 };
 
+#[cfg(feature = "backend_egl")]
+use crate::backend::egl::{
+    context::{GlAttributes, PixelFormatRequirements},
+    display::EGLDisplay,
+    native, EGLContext, EGLSurface, Error as EGLError,
+};
+#[cfg(feature = "renderer_gl")]
+use crate::backend::renderer::gles::{GlesError, GlesRenderer};
+#[cfg(feature = "renderer_pixman")]
+use crate::backend::renderer::pixman::{PixmanError, PixmanRenderer};
 use crate::{
-    backend::{
-        egl::{
-            context::{GlAttributes, PixelFormatRequirements},
-            display::EGLDisplay,
-            native, EGLContext, EGLSurface, Error as EGLError,
-        },
-        input::InputEvent,
-        renderer::{
-            gles::{GlesError, GlesRenderer},
-            Bind,
-        },
-    },
+    backend::{input::InputEvent, renderer::Bind},
     utils::{Clock, Monotonic, Physical, Rectangle, Size},
 };
 
@@ -62,8 +65,7 @@ pub use self::input::*;
 /// [`Renderer`](crate::backend::renderer::Renderer) trait and a corresponding [`WinitEventLoop`].
 pub fn init<R>() -> Result<(WinitGraphicsBackend<R>, WinitEventLoop), Error>
 where
-    R: From<GlesRenderer> + Bind<EGLSurface>,
-    crate::backend::SwapBuffersError: From<R::Error>,
+    R: From<PixmanRenderer> + Bind<Image<'static, 'static>>,
 {
     init_from_attributes(
         WinitWindow::default_attributes()
@@ -80,31 +82,7 @@ pub fn init_from_attributes<R>(
     attributes: WindowAttributes,
 ) -> Result<(WinitGraphicsBackend<R>, WinitEventLoop), Error>
 where
-    R: From<GlesRenderer> + Bind<EGLSurface>,
-    crate::backend::SwapBuffersError: From<R::Error>,
-{
-    init_from_attributes_with_gl_attr(
-        attributes,
-        GlAttributes {
-            version: (3, 0),
-            profile: None,
-            debug: cfg!(debug_assertions),
-            vsync: false,
-        },
-    )
-}
-
-/// Create a new [`WinitGraphicsBackend`], which implements the [`Renderer`](crate::backend::renderer::Renderer)
-/// trait, from a given [`WindowAttributes`] struct, as well as given
-/// [`GlAttributes`] for further customization of the rendering pipeline and a
-/// corresponding [`WinitEventLoop`].
-pub fn init_from_attributes_with_gl_attr<R>(
-    attributes: WindowAttributes,
-    gl_attributes: GlAttributes,
-) -> Result<(WinitGraphicsBackend<R>, WinitEventLoop), Error>
-where
-    R: From<GlesRenderer> + Bind<EGLSurface>,
-    crate::backend::SwapBuffersError: From<R::Error>,
+    R: From<PixmanRenderer> + Bind<Image<'static, 'static>>,
 {
     let span = info_span!("backend_winit", window = tracing::field::Empty);
     let _guard = span.enter();
@@ -123,64 +101,23 @@ where
     span.record("window", Into::<u64>::into(window.id()));
     debug!("Window created");
 
-    let (display, context, surface, is_x11) = {
-        let display = unsafe { EGLDisplay::new(window.clone())? };
+    let (surface, image, is_x11) = {
+        let context = softbuffer::Context::new(event_loop.owned_display_handle())?;
+        let surface = softbuffer::Surface::new(&context, window.clone())?;
 
-        let context =
-            EGLContext::new_with_config(&display, gl_attributes, PixelFormatRequirements::_10_bit())
-                .or_else(|_| {
-                    EGLContext::new_with_config(&display, gl_attributes, PixelFormatRequirements::_8_bit())
-                })?;
+        let image = pixman::Image::new(
+            pixman::FormatCode::X8R8G8B8,
+            window.inner_size().width as usize,
+            window.inner_size().height as usize,
+            true,
+        )
+        .map_err(|_| PixmanError::Unsupported)?;
 
-        let (surface, is_x11) = match window.window_handle().map(|handle| handle.as_raw()) {
-            Ok(RawWindowHandle::Wayland(handle)) => {
-                debug!("Winit backend: Wayland");
-                let size = window.inner_size();
-                let surface = unsafe {
-                    wegl::WlEglSurface::new_from_raw(
-                        handle.surface.as_ptr() as *mut _,
-                        size.width as i32,
-                        size.height as i32,
-                    )
-                }
-                .map_err(|err| Error::Surface(err.into()))?;
-                unsafe {
-                    (
-                        EGLSurface::new(
-                            &display,
-                            context.pixel_format().unwrap(),
-                            context.config_id(),
-                            surface,
-                        )
-                        .map_err(EGLError::CreationFailed)?,
-                        false,
-                    )
-                }
-            }
-            Ok(RawWindowHandle::Xlib(handle)) => {
-                debug!("Winit backend: X11");
-                unsafe {
-                    (
-                        EGLSurface::new(
-                            &display,
-                            context.pixel_format().unwrap(),
-                            context.config_id(),
-                            native::XlibWindow(handle.window),
-                        )
-                        .map_err(EGLError::CreationFailed)?,
-                        true,
-                    )
-                }
-            }
-            _ => panic!("only running on Wayland or with Xlib is supported"),
-        };
-
-        let _ = context.unbind();
-        (display, context, surface, is_x11)
+        (surface, image, false)
     };
 
-    let renderer = unsafe { GlesRenderer::new(context)?.into() };
-    let damage_tracking = display.supports_damage();
+    let renderer = PixmanRenderer::new()?.into();
+    let damage_tracking = true;
 
     drop(_guard);
 
@@ -191,8 +128,10 @@ where
         WinitGraphicsBackend {
             window: window.clone(),
             span: span.clone(),
-            _display: display,
-            egl_surface: surface,
+            _egl_display: None,
+            egl_surface: None,
+            surface,
+            image,
             damage_tracking,
             bind_size: None,
             renderer,
@@ -229,31 +168,49 @@ pub enum Error {
     #[error("Context creation is not supported on the current window system")]
     NotSupported,
     /// EGL error.
+    #[cfg(feature = "backend_egl")]
     #[error("EGL error: {0}")]
     Egl(#[from] EGLError),
+    #[cfg(feature = "renderer_gl")]
     /// Renderer initialization failed.
     #[error("Renderer creation failed: {0}")]
     RendererCreationError(#[from] GlesError),
+    /// Softbuffer error.
+    #[cfg(feature = "softbuffer")]
+    #[error("Softbuffer error: {0}")]
+    Softbuffer(#[from] softbuffer::SoftBufferError),
+    /// Pixman error.
+    #[cfg(feature = "renderer_pixman")]
+    #[error("Pixman error: {0}")]
+    Pixman(#[from] PixmanError),
+}
+
+#[cfg(feature = "softbuffer")]
+impl From<softbuffer::SoftBufferError> for crate::backend::SwapBuffersError {
+    #[inline]
+    fn from(err: softbuffer::SoftBufferError) -> Self {
+        crate::backend::SwapBuffersError::ContextLost(format!("{err:?}").into())
+    }
 }
 
 /// Window with an active EGL Context created by `winit`.
 #[derive(Debug)]
 pub struct WinitGraphicsBackend<R> {
     renderer: R,
+
     // The display isn't used past this point but must be kept alive.
-    _display: EGLDisplay,
-    egl_surface: EGLSurface,
+    _egl_display: Option<EGLDisplay>,
+    egl_surface: Option<EGLSurface>,
+
+    surface: softbuffer::Surface<OwnedDisplayHandle, Arc<WinitWindow>>,
+    image: pixman::Image<'static, 'static>,
     window: Arc<WinitWindow>,
     damage_tracking: bool,
     bind_size: Option<Size<i32, Physical>>,
     span: tracing::Span,
 }
 
-impl<R> WinitGraphicsBackend<R>
-where
-    R: Bind<EGLSurface>,
-    crate::backend::SwapBuffersError: From<R::Error>,
-{
+impl<R> WinitGraphicsBackend<R> {
     /// Window size of the underlying window
     pub fn window_size(&self) -> Size<i32, Physical> {
         let (w, h): (i32, i32) = self.window.inner_size().into();
@@ -275,59 +232,11 @@ where
         &mut self.renderer
     }
 
-    /// Bind the underlying window to the underlying renderer.
-    #[instrument(level = "trace", parent = &self.span, skip(self))]
-    #[profiling::function]
-    pub fn bind(&mut self) -> Result<(&mut R, R::Framebuffer<'_>), crate::backend::SwapBuffersError> {
-        // NOTE: we must resize before making the current context current, otherwise the back
-        // buffer will be latched. Some nvidia drivers may not like it, but a lot of wayland
-        // software does the order that way due to mesa latching back buffer on each
-        // `make_current`.
-        let window_size = self.window_size();
-        if Some(window_size) != self.bind_size {
-            self.egl_surface.resize(window_size.w, window_size.h, 0, 0);
-        }
-        self.bind_size = Some(window_size);
-
-        let fb = self.renderer.bind(&mut self.egl_surface)?;
-
-        Ok((&mut self.renderer, fb))
-    }
-
-    /// Retrieve the underlying `EGLSurface` for advanced operations
-    ///
-    /// **Note:** Don't carelessly use this to manually bind the renderer to the surface,
-    /// `WinitGraphicsBackend::bind` transparently handles window resizes for you.
-    pub fn egl_surface(&self) -> &EGLSurface {
-        &self.egl_surface
-    }
-
-    /// Retrieve the buffer age of the current backbuffer of the window.
-    ///
-    /// This will only return a meaningful value, if this `WinitGraphicsBackend`
-    /// is currently bound (by previously calling [`WinitGraphicsBackend::bind`]).
-    ///
-    /// Otherwise and on error this function returns `None`.
-    /// If you are using this value actively e.g. for damage-tracking you should
-    /// likely interpret an error just as if "0" was returned.
-    #[instrument(level = "trace", parent = &self.span, skip(self))]
-    pub fn buffer_age(&self) -> Option<usize> {
-        if self.damage_tracking {
-            self.egl_surface.buffer_age().map(|x| x as usize)
-        } else {
-            Some(0)
-        }
-    }
-
-    /// Submits the back buffer to the window by swapping, requires the window to be previously
-    /// bound (see [`WinitGraphicsBackend::bind`]).
-    #[instrument(level = "trace", parent = &self.span, skip(self))]
-    #[profiling::function]
-    pub fn submit(
-        &mut self,
+    fn compute_damage(
+        &self,
         damage: Option<&[Rectangle<i32, Physical>]>,
-    ) -> Result<(), crate::backend::SwapBuffersError> {
-        let mut damage = match damage {
+    ) -> Option<Vec<Rectangle<i32, Physical>>> {
+        match damage {
             Some(damage) if self.damage_tracking && !damage.is_empty() => {
                 let bind_size = self
                     .bind_size
@@ -344,11 +253,152 @@ where
                 Some(damage)
             }
             _ => None,
-        };
+        }
+    }
+}
+
+#[cfg(feature = "backend_egl")]
+impl<R> WinitGraphicsBackend<R>
+where
+    R: Bind<EGLSurface>,
+    crate::backend::SwapBuffersError: From<R::Error>,
+{
+    /// Bind the underlying window to the underlying renderer.
+    #[instrument(level = "trace", parent = &self.span, skip(self))]
+    #[profiling::function]
+    pub fn bind_egl(&mut self) -> Result<(&mut R, R::Framebuffer<'_>), crate::backend::SwapBuffersError> {
+        // NOTE: we must resize before making the current context current, otherwise the back
+        // buffer will be latched. Some nvidia drivers may not like it, but a lot of wayland
+        // software does the order that way due to mesa latching back buffer on each
+        // `make_current`.
+        let window_size = self.window_size();
+        if Some(window_size) != self.bind_size {
+            self.egl_surface().resize(window_size.w, window_size.h, 0, 0);
+        }
+        self.bind_size = Some(window_size);
+
+        let fb = self.renderer.bind(self.egl_surface.as_mut().unwrap())?;
+
+        Ok((&mut self.renderer, fb))
+    }
+
+    /// Retrieve the underlying `EGLSurface` for advanced operations
+    ///
+    /// **Note:** Don't carelessly use this to manually bind the renderer to the surface,
+    /// `WinitGraphicsBackend::bind` transparently handles window resizes for you.
+    pub fn egl_surface(&self) -> &EGLSurface {
+        self.egl_surface.as_ref().unwrap()
+    }
+
+    /// Retrieve the buffer age of the current backbuffer of the window.
+    ///
+    /// This will only return a meaningful value, if this `WinitGraphicsBackend`
+    /// is currently bound (by previously calling [`WinitGraphicsBackend::bind`]).
+    ///
+    /// Otherwise and on error this function returns `None`.
+    /// If you are using this value actively e.g. for damage-tracking you should
+    /// likely interpret an error just as if "0" was returned.
+    #[instrument(level = "trace", parent = &self.span, skip(self))]
+    pub fn buffer_age(&self) -> Option<usize> {
+        if self.damage_tracking {
+            self.egl_surface().buffer_age().map(|x| x as usize)
+        } else {
+            Some(0)
+        }
+    }
+
+    /// Submits the back buffer to the window by swapping, requires the window to be previously
+    /// bound (see [`WinitGraphicsBackend::bind`]).
+    #[instrument(level = "trace", parent = &self.span, skip(self))]
+    #[profiling::function]
+    pub fn submit_egl(
+        &mut self,
+        damage: Option<&[Rectangle<i32, Physical>]>,
+    ) -> Result<(), crate::backend::SwapBuffersError> {
+        let mut damage = self.compute_damage(damage);
 
         // Request frame callback.
         self.window.pre_present_notify();
-        self.egl_surface.swap_buffers(damage.as_deref_mut())?;
+        self.egl_surface().swap_buffers(damage.as_deref_mut())?;
+        Ok(())
+    }
+}
+
+impl<R> WinitGraphicsBackend<R>
+where
+    R: Bind<Image<'static, 'static>>,
+    crate::backend::SwapBuffersError: From<R::Error>,
+{
+    /// Bind the underlying window to the underlying renderer.
+    #[instrument(level = "trace", parent = &self.span, skip(self))]
+    #[profiling::function]
+    pub fn bind_pixman(&mut self) -> Result<(&mut R, R::Framebuffer<'_>), crate::backend::SwapBuffersError> {
+        // NOTE: we must resize before making the current context current, otherwise the back
+        // buffer will be latched. Some nvidia drivers may not like it, but a lot of wayland
+        // software does the order that way due to mesa latching back buffer on each
+        // `make_current`.
+        let window_size = self.window_size();
+        if Some(window_size) != self.bind_size {
+            self.surface
+                .resize(
+                    NonZeroU32::new(window_size.w as u32).unwrap(),
+                    NonZeroU32::new(window_size.h as u32).unwrap(),
+                )
+                .unwrap();
+            self.image = Image::new(
+                pixman::FormatCode::X8R8G8B8,
+                window_size.w as usize,
+                window_size.h as usize,
+                true,
+            )
+            .map_err(|_| PixmanError::Unsupported)?;
+        }
+        self.bind_size = Some(window_size);
+
+        let fb = self.renderer.bind(&mut self.image)?;
+
+        Ok((&mut self.renderer, fb))
+    }
+
+    /// Submits the back buffer to the window by swapping, requires the window to be previously
+    /// bound (see [`WinitGraphicsBackend::bind`]).
+    #[instrument(level = "trace", parent = &self.span, skip(self))]
+    #[profiling::function]
+    pub fn submit_pixman(
+        &mut self,
+        damage: Option<&[Rectangle<i32, Physical>]>,
+    ) -> Result<(), crate::backend::SwapBuffersError> {
+        let damage = self.compute_damage(damage);
+
+        let mut buffer = self.surface.buffer_mut()?;
+
+        let image_data = unsafe {
+            core::slice::from_raw_parts(self.image.data(), self.image.stride() * self.image.height() / 4)
+        };
+        let width = buffer.width().get() as usize;
+        for (i, row) in image_data.chunks_exact(self.image.stride() / 4).enumerate() {
+            let y = self.image.height() - i - 1;
+            buffer[y * width..(y + 1) * width].copy_from_slice(&row[..width]);
+        }
+
+        // Request frame callback.
+        self.window.pre_present_notify();
+        if let Some(damage) = damage {
+            buffer.present_with_damage(
+                &damage
+                    .iter()
+                    .map(|damage| softbuffer::Rect {
+                        x: damage.loc.x as u32,
+                        y: damage.loc.y as u32,
+                        width: NonZeroU32::new(damage.size.w as u32).unwrap(),
+                        height: NonZeroU32::new(damage.size.h as u32).unwrap(),
+                    })
+                    .collect::<Vec<_>>(),
+            )?;
+        } else {
+            buffer.present()?;
+        }
+
         Ok(())
     }
 }

@@ -14,11 +14,10 @@ use smithay::{
 use smithay::{
     backend::{
         allocator::dmabuf::Dmabuf,
-        egl::EGLDevice,
         renderer::{
             damage::{Error as OutputDamageTrackerError, OutputDamageTracker},
             element::AsRenderElements,
-            gles::GlesRenderer,
+            pixman::PixmanRenderer,
             ImportDma, ImportMemWl,
         },
         winit::{self, WinitEvent, WinitGraphicsBackend},
@@ -53,7 +52,7 @@ use crate::{drawing::*, render::*};
 pub const OUTPUT_NAME: &str = "winit";
 
 pub struct WinitData {
-    backend: WinitGraphicsBackend<GlesRenderer>,
+    backend: WinitGraphicsBackend<PixmanRenderer>,
     damage_tracker: OutputDamageTracker,
     dmabuf_state: (DmabufState, DmabufGlobal, Option<DmabufFeedback>),
     full_redraw: u8,
@@ -99,7 +98,7 @@ pub fn run_winit() {
     let mut display_handle = display.handle();
 
     #[cfg_attr(not(feature = "egl"), allow(unused_mut))]
-    let (mut backend, mut winit) = match winit::init::<GlesRenderer>() {
+    let (mut backend, mut winit) = match winit::init::<PixmanRenderer>() {
         Ok(ret) => ret,
         Err(err) => {
             error!("Failed to initialize Winit backend: {}", err);
@@ -145,37 +144,11 @@ pub fn run_winit() {
     #[cfg(feature = "debug")]
     let mut fps_element = FpsElement::new(fps_texture);
 
-    let render_node = EGLDevice::device_for_display(backend.renderer().egl_context().display())
-        .and_then(|device| device.try_get_render_node());
-
-    let dmabuf_default_feedback = match render_node {
-        Ok(Some(node)) => {
-            let dmabuf_formats = backend.renderer().dmabuf_formats();
-            let dmabuf_default_feedback = DmabufFeedbackBuilder::new(node.dev_id(), dmabuf_formats)
-                .build()
-                .unwrap();
-            Some(dmabuf_default_feedback)
-        }
-        Ok(None) => {
-            warn!("failed to query render node, dmabuf will use v3");
-            None
-        }
-        Err(err) => {
-            warn!(?err, "failed to egl device for display, dmabuf will use v3");
-            None
-        }
-    };
+    //let dmabuf_default_feedback = None;
 
     // if we failed to build dmabuf feedback we fall back to dmabuf v3
     // Note: egl on Mesa requires either v4 or wl_drm (initialized with bind_wl_display)
-    let dmabuf_state = if let Some(default_feedback) = dmabuf_default_feedback {
-        let mut dmabuf_state = DmabufState::new();
-        let dmabuf_global = dmabuf_state.create_global_with_default_feedback::<AnvilState<WinitData>>(
-            &display.handle(),
-            &default_feedback,
-        );
-        (dmabuf_state, dmabuf_global, Some(default_feedback))
-    } else {
+    let dmabuf_state = {
         let dmabuf_formats = backend.renderer().dmabuf_formats();
         let mut dmabuf_state = DmabufState::new();
         let dmabuf_global =
@@ -296,7 +269,7 @@ pub fn run_winit() {
             let age = if *full_redraw > 0 {
                 0
             } else {
-                backend.buffer_age().unwrap_or(0)
+                0 //backend.buffer_age().unwrap_or(0)
             };
             #[cfg(feature = "debug")]
             let window_handle = backend
@@ -310,13 +283,13 @@ pub fn run_winit() {
                     }
                 })
                 .unwrap_or_else(|_| std::ptr::null_mut());
-            let render_res = backend.bind().and_then(|(renderer, mut fb)| {
+            let render_res = backend.bind_pixman().and_then(|(renderer, mut fb)| {
                 #[cfg(feature = "debug")]
                 if let Some(renderdoc) = renderdoc.as_mut() {
                     renderdoc.start_frame_capture(renderer.egl_context().get_context_handle(), window_handle);
                 }
 
-                let mut elements = Vec::<CustomRenderElements<GlesRenderer>>::new();
+                let mut elements = Vec::<CustomRenderElements<PixmanRenderer>>::new();
 
                 elements.extend(
                     pointer_element.render_elements(
@@ -335,7 +308,7 @@ pub fn run_winit() {
                         .to_physical(scale)
                         .to_i32_round();
                     if icon.surface.alive() {
-                        elements.extend(AsRenderElements::<GlesRenderer>::render_elements(
+                        elements.extend(AsRenderElements::<PixmanRenderer>::render_elements(
                             &smithay::desktop::space::SurfaceTree::from_surface(&icon.surface),
                             renderer,
                             dnd_icon_pos,
@@ -370,7 +343,7 @@ pub fn run_winit() {
                 Ok(render_output_result) => {
                     let has_rendered = render_output_result.damage.is_some();
                     if let Some(damage) = render_output_result.damage {
-                        if let Err(err) = backend.submit(Some(damage)) {
+                        if let Err(err) = backend.submit_pixman(Some(damage)) {
                             warn!("Failed to submit buffer: {}", err);
                         }
                     }
