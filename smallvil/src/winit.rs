@@ -1,5 +1,7 @@
+use std::sync::Arc;
 use std::time::Duration;
 
+use smithay::wayland::socket::ListeningSocketSource;
 use smithay::{
     backend::{
         renderer::{
@@ -13,11 +15,13 @@ use smithay::{
     utils::Transform,
 };
 
+use crate::state::ClientState;
 use crate::Smallvil;
 
 pub fn init_winit(
     event_loop: &mut EventLoop<Smallvil>,
     state: &mut Smallvil,
+    listening_socket: ListeningSocketSource,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let (mut backend, winit) = winit::init()?;
 
@@ -49,6 +53,17 @@ pub fn init_winit(
     backend.window().request_redraw();
 
     event_loop.handle().insert_source(winit, move |event, _, state| {
+        while let Some(client_stream) = listening_socket.socket.get_ref().accept().unwrap() {
+            dbg!("new client");
+            // Inside the callback, you should insert the client into the display.
+            //
+            // You may also associate some data with the client when inserting the client.
+            state
+                .display_handle
+                .insert_client(client_stream, Arc::new(ClientState::default()))
+                .unwrap();
+        }
+
         match event {
             WinitEvent::Resized { size, .. } => {
                 output.change_current_state(

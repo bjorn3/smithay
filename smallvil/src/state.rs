@@ -43,7 +43,7 @@ pub struct Smallvil {
 }
 
 impl Smallvil {
-    pub fn new(event_loop: &mut EventLoop<Self>, display: Display<Self>) -> Self {
+    pub fn new(event_loop: &mut EventLoop<Self>, display: Display<Self>) -> (Self, ListeningSocketSource) {
         let start_time = std::time::Instant::now();
 
         let dh = display.handle();
@@ -83,31 +83,37 @@ impl Smallvil {
         let space = Space::default();
 
         // Setup a wayland socket that will be used to accept clients
-        let socket_name = Self::init_wayland_listener(display, event_loop);
+        let (socket_name, listening_socket) = Self::init_wayland_listener(display, event_loop);
 
         // Get the loop signal, used to stop the event loop
         let loop_signal = event_loop.get_signal();
 
-        Self {
-            start_time,
-            display_handle: dh,
+        (
+            Self {
+                start_time,
+                display_handle: dh,
 
-            space,
-            loop_signal,
-            socket_name,
+                space,
+                loop_signal,
+                socket_name,
 
-            compositor_state,
-            xdg_shell_state,
-            shm_state,
-            output_manager_state,
-            seat_state,
-            data_device_state,
-            popups,
-            seat,
-        }
+                compositor_state,
+                xdg_shell_state,
+                shm_state,
+                output_manager_state,
+                seat_state,
+                data_device_state,
+                popups,
+                seat,
+            },
+            listening_socket,
+        )
     }
 
-    fn init_wayland_listener(display: Display<Smallvil>, event_loop: &mut EventLoop<Self>) -> OsString {
+    fn init_wayland_listener(
+        display: Display<Smallvil>,
+        event_loop: &mut EventLoop<Self>,
+    ) -> (OsString, ListeningSocketSource) {
         // Creates a new listening socket, automatically choosing the next available `wayland` socket name.
         let listening_socket = ListeningSocketSource::new_auto().unwrap();
 
@@ -116,18 +122,6 @@ impl Smallvil {
         let socket_name = listening_socket.socket_name().to_os_string();
 
         let loop_handle = event_loop.handle();
-
-        loop_handle
-            .insert_source(listening_socket, move |client_stream, _, state| {
-                // Inside the callback, you should insert the client into the display.
-                //
-                // You may also associate some data with the client when inserting the client.
-                state
-                    .display_handle
-                    .insert_client(client_stream, Arc::new(ClientState::default()))
-                    .unwrap();
-            })
-            .expect("Failed to init the wayland event source.");
 
         // You also need to add the display itself to the event loop, so that client events will be processed by wayland-server.
         loop_handle
@@ -143,7 +137,7 @@ impl Smallvil {
             )
             .unwrap();
 
-        socket_name
+        (socket_name, listening_socket)
     }
 
     pub fn surface_under(&self, pos: Point<f64, Logical>) -> Option<(WlSurface, Point<f64, Logical>)> {

@@ -17,10 +17,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let display: Display<Smallvil> = Display::new()?;
 
-    let mut state = Smallvil::new(&mut event_loop, display);
+    let (mut state, listening_socket) = Smallvil::new(&mut event_loop, display);
 
     // Open a Wayland/X11 window for our nested compositor
-    crate::winit::init_winit(&mut event_loop, &mut state)?;
+    crate::winit::init_winit(&mut event_loop, &mut state, listening_socket)?;
 
     // Set WAYLAND_DISPLAY to our socket name, so child processes connect to Smallvil rather
     // than the host compositor

@@ -57,7 +57,7 @@ use wayland_server::{BindError, ListeningSocket};
 /// This implements [`EventSource`] and may be inserted into an event loop.
 #[derive(Debug)]
 pub struct ListeningSocketSource {
-    socket: Generic<ListeningSocket>,
+    pub socket: Generic<ListeningSocket>,
 }
 
 impl ListeningSocketSource {
@@ -67,7 +67,22 @@ impl ListeningSocketSource {
         //
         // We don't try wayland-0 due since clients may connect to the wrong compositor. Clients these days
         // should be connecting based off the WAYLAND_DISPLAY or WAYLAND_SOCKET environment variables.
-        let socket = ListeningSocket::bind_auto("wayland", 1..33)?;
+        let socket = 'a: {
+            let basename: &str = "wayland";
+            let range = 1..33;
+            for i in range {
+                // early return on any error except AlreadyInUse
+                match ListeningSocket::bind(format!("{basename}-{i}")) {
+                    Ok(socket) => break 'a Ok(socket),
+                    Err(BindError::RuntimeDirNotSet) => break 'a Err(BindError::RuntimeDirNotSet),
+                    Err(BindError::PermissionDenied) => break 'a Err(BindError::PermissionDenied),
+                    Err(BindError::Io(e)) if e.kind() == io::ErrorKind::AddrInUse => {}
+                    Err(BindError::Io(e)) => break 'a Err(BindError::Io(e)),
+                    Err(BindError::AlreadyInUse) => {}
+                }
+            }
+            Err(BindError::AlreadyInUse)
+        }?;
 
         info!(name = ?socket.socket_name(), "Created new socket");
 
