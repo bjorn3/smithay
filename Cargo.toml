@@ -156,4 +156,4 @@ wayland-protocols-misc = { git = "https://github.com/jackpot51/wayland-rs.git", 
 wayland-protocols-wlr = { git = "https://github.com/jackpot51/wayland-rs.git", branch = "redox" }
 wayland-server = { git = "https://github.com/jackpot51/wayland-rs.git", branch = "redox" }
 wayland-sys = { git = "https://github.com/jackpot51/wayland-rs.git", branch = "redox" }
-winit = { git = "https://github.com/jackpot51/winit.git", branch = "redox-wayland" }
+winit = { git = "https://github.com/jackpot51/winit.git", branch = "redox-0.30" }
